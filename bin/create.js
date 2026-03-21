@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const getTemplates = require('../lib/templates');
-const { findBlender, BLENDER_VERSION } = require('../lib/engine');
+const { findBlender, BLENDER_VERSIONS } = require('../lib/engine');
 const { installSkills } = require('../lib/skills');
 
 const targetDir = process.argv[2] ? path.resolve(process.argv[2]) : (process.env.INIT_CWD || process.cwd());
@@ -30,7 +30,7 @@ Blender 4.3 project. Uses [blender-kit](https://github.com/AnEntrypoint/blender-
 
 ## First-time setup
 \`\`\`bash
-blender-dev download-engine   # shows Blender ${BLENDER_VERSION} download info
+blender-dev download-engine   # shows Blender ${BLENDER_VERSIONS[0]} download info
 blender-dev setup             # install flake8 + black (needs Python)
 blender-dev config set blenderPath "C:/Program Files/Blender Foundation/Blender 4.3/blender.exe"
 \`\`\`

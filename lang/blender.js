@@ -4,6 +4,7 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 const { execFileSync } = require('child_process');
+const { findBlender } = require('../lib/engine');
 
 function isSingleExpr(code) {
 	const t = code.trim();
@@ -29,31 +30,6 @@ function httpPost(port, urlPath, body) {
 	});
 }
 
-function findBlenderExe() {
-	// Try config first
-	try {
-		const cfgPath = path.join(os.homedir(), '.blender-kit', 'config.json');
-		const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-		if (cfg.blenderPath && fs.existsSync(cfg.blenderPath)) return cfg.blenderPath;
-	} catch {}
-	// Common Windows paths
-	const candidates = [
-		'C:/Program Files/Blender Foundation/Blender 4.3/blender.exe',
-		'C:/Program Files/Blender Foundation/Blender 4.2/blender.exe',
-		'/Applications/Blender.app/Contents/MacOS/Blender',
-		'blender',
-		'blender4.3',
-	];
-	for (const p of candidates) {
-		if (p.startsWith('/') || p.includes(':')) {
-			if (fs.existsSync(p)) return p;
-		} else {
-			try { execFileSync(p, ['--version'], { stdio: 'pipe' }); return p; } catch {}
-		}
-	}
-	return null;
-}
-
 async function run(code, cwd) {
 	try {
 		if (isSingleExpr(code)) {
@@ -63,7 +39,7 @@ async function run(code, cwd) {
 			} catch (_) {}
 		}
 		// Headless fallback
-		const blender = findBlenderExe();
+		const blender = findBlender(null);
 		if (!blender) return 'Error: Blender not found. Set blenderPath in ~/.blender-kit/config.json';
 
 		const tmp = path.join(os.tmpdir(), `blender_exec_${Date.now()}.py`);
