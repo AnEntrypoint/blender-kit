@@ -1,0 +1,56 @@
+name: Publish to npm
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci --ignore-scripts
+
+      - name: Bump version to 1.0.<timestamp>
+        run: |
+          TS=$(date +%s)
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            p.version = '1.0.' + process.argv[1];
+            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+            console.log('Version bumped to', p.version);
+          " $TS
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            const lock = fs.existsSync('package-lock.json') ? JSON.parse(fs.readFileSync('package-lock.json', 'utf8')) : null;
+            if (lock) {
+              lock.version = p.version;
+              if (lock.packages && lock.packages['']) lock.packages[''].version = p.version;
+              fs.writeFileSync('package-lock.json', JSON.stringify(lock, null, 2) + '\n');
+              require('child_process').execSync('git add package.json package-lock.json');
+            } else {
+              require('child_process').execSync('git add package.json');
+            }
+          "
+          git commit -m "chore: bump version [skip ci]" || echo "nothing to commit"
+          git push || echo "push skipped"
+
+      - run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
