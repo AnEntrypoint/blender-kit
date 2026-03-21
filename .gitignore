@@ -12,3 +12,6 @@ __pycache__/
 Thumbs.db
 /tmp/
 *.tmp
+.gm-stop-verified
+
+.code-search/
