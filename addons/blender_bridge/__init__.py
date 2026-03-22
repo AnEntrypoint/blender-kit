@@ -102,10 +102,19 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
             if self.path == "/info":
+                import sys
+                scene = bpy.context.scene
+                ao = bpy.context.active_object
                 self.send_json(200, {
                     "blender_version": ".".join(str(v) for v in bpy.app.version),
-                    "scene": bpy.context.scene.name if bpy.context.scene else None,
+                    "scene": scene.name if scene else None,
                     "object_count": len(bpy.data.objects),
+                    "current_frame": scene.frame_current if scene else None,
+                    "frame_start": scene.frame_start if scene else None,
+                    "frame_end": scene.frame_end if scene else None,
+                    "fps": scene.render.fps if scene else None,
+                    "active_object": ao.name if ao else None,
+                    "python_version": sys.version.split()[0],
                 })
 
             elif self.path == "/objects":
@@ -167,7 +176,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     curves.append({"data_path": fc.data_path, "array_index": fc.array_index, "keyframes": [[k.co.x, k.co.y] for k in fc.keyframe_points]})
                 self.send_json(200, {"object": name, "fcurves": curves})
 
-            elif self.path.startswith("/object/") and not any(self.path.endswith(s) for s in ["/hide", "/transform", "/delete", "/keyframe", "/fcurves", "/assign-material"]):
+            elif self.path.startswith("/object/") and not any(self.path.endswith(s) for s in ["/hide", "/transform", "/delete", "/keyframe", "/fcurves", "/assign-material", "/rename", "/duplicate"]):
                 name = self.path[len("/object/"):]
                 obj = bpy.data.objects.get(name)
                 if obj is None:
@@ -187,6 +196,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     "modifiers": [{"name": m.name, "type": m.type} for m in obj.modifiers],
                     "mesh_stats": mesh_stats,
                 })
+
+            elif self.path == "/scenes":
+                scenes = [{"name": s.name, "object_count": len(s.objects), "frame_current": s.frame_current} for s in bpy.data.scenes]
+                self.send_json(200, {"scenes": scenes})
 
             elif self.path == "/collections":
                 result = []
@@ -253,6 +266,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
             elif self.path == "/render/status":
                 self.send_json(200, {"rendering": bpy.app.is_job_running("RENDER")})
 
+            elif self.path == "/frame":
+                scene = bpy.context.scene
+                self.send_json(200, {"current": scene.frame_current, "start": scene.frame_start, "end": scene.frame_end, "fps": scene.render.fps})
+
 
             else:
                 self.send_json(404, {"error": "Not found", "path": self.path})
@@ -265,14 +282,21 @@ class BridgeHandler(BaseHTTPRequestHandler):
             body = self.read_json()
 
             if self.path == "/eval":
+                import io, sys
                 expr = body.get("expr", "")
                 try:
                     result = eval(expr, {"bpy": bpy, "__builtins__": __builtins__})
                     self.send_json(200, {"result": str(result)})
                 except SyntaxError:
-                    ns = {"bpy": bpy}
-                    exec(expr, ns)
-                    self.send_json(200, {"result": "(executed)"})
+                    buf = io.StringIO()
+                    old_stdout = sys.stdout
+                    sys.stdout = buf
+                    try:
+                        exec(expr, {"bpy": bpy, "print": print})
+                    finally:
+                        sys.stdout = old_stdout
+                    out = buf.getvalue()
+                    self.send_json(200, {"result": out if out else "(executed)"})
 
             elif self.path == "/select":
                 name = body.get("name", "")
@@ -411,6 +435,44 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 frame = body.get("frame", bpy.context.scene.frame_current)
                 obj.keyframe_insert(data_path=prop, frame=frame)
                 self.send_json(200, {"object": name, "prop": prop, "frame": frame})
+
+            elif self.path.endswith("/rename") and self.path.startswith("/object/"):
+                name = self.path[len("/object/"):-len("/rename")]
+                obj = bpy.data.objects.get(name)
+                if obj is None:
+                    self.send_json(404, {"error": f"Object not found: {name}"}); return
+                new_name = body.get("new_name", "")
+                if not new_name:
+                    self.send_json(400, {"error": "new_name required"}); return
+                obj.name = new_name
+                self.send_json(200, {"old_name": name, "new_name": obj.name})
+
+            elif self.path.endswith("/duplicate") and self.path.startswith("/object/"):
+                name = self.path[len("/object/"):-len("/duplicate")]
+                obj = bpy.data.objects.get(name)
+                if obj is None:
+                    self.send_json(404, {"error": f"Object not found: {name}"}); return
+                bpy.context.view_layer.objects.active = obj
+                bpy.ops.object.select_all(action='DESELECT')
+                obj.select_set(True)
+                try:
+                    bpy.ops.object.mode_set(mode='OBJECT')
+                except Exception:
+                    pass
+                bpy.ops.object.duplicate(linked=body.get("linked", False))
+                new_obj = bpy.context.active_object
+                self.send_json(200, {"original": name, "duplicate": new_obj.name if new_obj else None})
+
+            elif self.path == "/scene/set":
+                scene_name = body.get("name", "")
+                scene = bpy.data.scenes.get(scene_name)
+                if scene is None:
+                    self.send_json(404, {"error": f"Scene not found: {scene_name}"}); return
+                try:
+                    bpy.context.window_manager.windows[0].scene = scene
+                    self.send_json(200, {"scene": scene.name})
+                except Exception as e:
+                    self.send_json(500, {"error": str(e)})
 
 
 
@@ -561,6 +623,33 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     return None
                 bpy.app.timers.register(_do_render, first_interval=0)
                 self.send_json(200, {"status": "started", "frame": bpy.context.scene.frame_current})
+
+            elif self.path == "/frame":
+                scene = bpy.context.scene
+                if "current" in body:
+                    scene.frame_set(int(body["current"]))
+                if "start" in body:
+                    scene.frame_start = int(body["start"])
+                if "end" in body:
+                    scene.frame_end = int(body["end"])
+                self.send_json(200, {"current": scene.frame_current, "start": scene.frame_start, "end": scene.frame_end, "fps": scene.render.fps})
+
+            elif self.path == "/render-settings":
+                scene = bpy.context.scene
+                r = scene.render
+                if "engine" in body:
+                    r.engine = body["engine"]
+                if "resolution_x" in body:
+                    r.resolution_x = int(body["resolution_x"])
+                if "resolution_y" in body:
+                    r.resolution_y = int(body["resolution_y"])
+                if "resolution_percentage" in body:
+                    r.resolution_percentage = int(body["resolution_percentage"])
+                if "samples" in body and hasattr(scene, "cycles"):
+                    scene.cycles.samples = int(body["samples"])
+                if "output_path" in body:
+                    r.filepath = body["output_path"]
+                self.send_json(200, {"engine": r.engine, "resolution_x": r.resolution_x, "resolution_y": r.resolution_y})
 
 
             else:
