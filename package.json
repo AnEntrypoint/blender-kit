@@ -6,7 +6,13 @@
     "blender-kit": "bin/create.js",
     "blender-dev": "bin/cli.js"
   },
-  "files": ["bin", "lib", "lang", "README.md"],
+  "files": [
+    "bin",
+    "lib",
+    "lang",
+    "README.md",
+    "addons"
+  ],
   "scripts": {
     "test": "node bin/cli.js --help"
   },
