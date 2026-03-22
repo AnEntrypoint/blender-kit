@@ -85,6 +85,12 @@ exec:blender
 <python expression or script>
 
 Always tries HTTP bridge first (port 6009, requires Blender open + blender_bridge addon enabled).
-Falls back to blender --background --python for headless execution.
-Requires: Blender installed and blenderPath set in ~/.blender-kit/config.json`,
+Falls back to blender --background --python for headless execution (30s timeout).
+Requires: Blender installed and blenderPath set in ~/.blender-kit/config.json
+
+IMPORTANT exec:blender rules:
+- Bridge /eval has a ~8s HTTP timeout. For scripts that create many objects or do heavy work, use headless fallback by ensuring Blender is NOT open, OR write script to disk and run via exec:bash with the blender binary.
+- Bridge is NOT a REPL — state is shared with the running Blender. All bpy.ops calls are safe (routed through main thread via timer queue).
+- Blender 5.0 API changes: use bpy.context.view_layer.objects.active (not bpy.context.active_object), sky type HOSEK_WILKIE (not NISHITA), layered action API for fcurves.
+- Prefer Geometry Nodes over duplicated mesh objects for scattering, instancing, and parametric shapes. GN modifiers are live-tweakable via blender-dev geonodes-set.`,
 };
