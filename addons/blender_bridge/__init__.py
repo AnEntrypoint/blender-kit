@@ -295,8 +295,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 import io, ast
                 expr = body.get("expr", "")
                 buf = io.StringIO()
-                def _print(*a, **kw): buf.write(" ".join(str(x) for x in a) + kw.get("end", "
-"))
+                def _print(*a, **kw): buf.write(" ".join(str(x) for x in a) + kw.get("end", chr(10)))
                 ns = {"bpy": bpy, "__builtins__": __builtins__, "print": _print}
                 try:
                     try:
@@ -506,7 +505,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     self.send_json(404, {"error": f"No geometry nodes modifier on: {name}"}); return
                 ng = mod.node_group
                 if ng is None:
-                    self.send_json(404, {"error": f"No node group on modifier"}); return
+                    self.send_json(404, {"error": "No node group on modifier"}); return
                 id_map = {item.name: item.identifier for item in ng.interface.items_tree if item.item_type == 'SOCKET' and item.in_out == 'INPUT'}
                 inputs = body.get("inputs", {})
                 set_list = []
