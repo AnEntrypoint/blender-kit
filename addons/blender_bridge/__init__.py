@@ -10,6 +10,8 @@ bl_info = {
 
 import bpy
 import json
+import queue
+import socket
 import threading
 import traceback
 import urllib.parse
@@ -18,6 +20,26 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 PORT = 6009
 _server = None
 _server_thread = None
+_main_queue = queue.Queue()
+
+
+def _tick():
+    while not _main_queue.empty():
+        fn, result_q = _main_queue.get_nowait()
+        try:
+            result_q.put(("ok", fn()))
+        except Exception as e:
+            result_q.put(("err", e))
+    return 0.05
+
+
+def _main_thread_call(fn):
+    result_q = queue.Queue()
+    _main_queue.put((fn, result_q))
+    status, value = result_q.get(timeout=10)
+    if status == "err":
+        raise value
+    return value
 
 def _get_obj_info(obj):
     return {
@@ -297,16 +319,17 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 buf = io.StringIO()
                 def _print(*a, **kw): buf.write(" ".join(str(x) for x in a) + kw.get("end", chr(10)))
                 ns = {"bpy": bpy, "__builtins__": __builtins__, "print": _print}
-                try:
+                def _run_eval():
                     try:
                         tree = ast.parse(expr, mode='eval')
-                        result = eval(compile(tree, '<expr>', 'eval'), ns)
-                        out = buf.getvalue()
-                        self.send_json(200, {"result": out if out else str(result)})
+                        return ("expr", eval(compile(tree, '<expr>', 'eval'), ns))
                     except SyntaxError:
                         exec(expr, ns)
-                        out = buf.getvalue()
-                        self.send_json(200, {"result": out if out else "(executed)"})
+                        return ("exec", None)
+                try:
+                    kind, result = _main_thread_call(_run_eval)
+                    out = buf.getvalue()
+                    self.send_json(200, {"result": out if out else (str(result) if kind == "expr" else "(executed)")})
                 except Exception as e:
                     self.send_json(500, {"error": str(e), "traceback": traceback.format_exc()})
 
@@ -315,9 +338,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 obj = bpy.data.objects.get(name)
                 if obj is None:
                     self.send_json(404, {"error": f"Object not found: {name}"}); return
-                bpy.ops.object.select_all(action="DESELECT")
-                obj.select_set(True)
-                bpy.context.view_layer.objects.active = obj
+                def _select():
+                    bpy.ops.object.select_all(action="DESELECT")
+                    obj.select_set(True)
+                    bpy.context.view_layer.objects.active = obj
+                _main_thread_call(_select)
                 self.send_json(200, {"selected": name})
 
             elif self.path == "/set":
@@ -335,7 +360,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
             elif self.path == "/reload":
                 try:
-                    bpy.ops.script.reload()
+                    _main_thread_call(bpy.ops.script.reload)
                 except Exception:
                     pass
                 self.send_json(200, {"reloaded": True})
@@ -477,7 +502,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 if scene is None:
                     self.send_json(404, {"error": f"Scene not found: {scene_name}"}); return
                 try:
-                    bpy.context.window_manager.windows[0].scene = scene
+                    _main_thread_call(lambda: setattr(bpy.context.window_manager.windows[0], "scene", scene))
                     self.send_json(200, {"scene": scene.name})
                 except Exception as e:
                     self.send_json(500, {"error": str(e)})
@@ -606,16 +631,19 @@ class BridgeHandler(BaseHTTPRequestHandler):
                         self.send_json(404, {"error": f"Modifier not found: {mod_name}"}); return
                 else:
                     mod = mods[0]
-                bpy.context.view_layer.objects.active = obj
-                bpy.ops.object.select_all(action='DESELECT')
-                obj.select_set(True)
-                wm = bpy.context.window_manager
-                win = wm.windows[0] if wm.windows else None
-                area = next((a for a in win.screen.areas if a.type == 'VIEW_3D'), None) if win else None
-                ctx = {"window": win, "area": area, "active_object": obj, "object": obj, "selected_objects": [obj]} if area else {"active_object": obj, "object": obj, "selected_objects": [obj]}
-                with bpy.context.temp_override(**ctx):
-                    bpy.ops.object.modifier_apply(modifier=mod.name)
-                self.send_json(200, {"applied": mod.name})
+                mod_name_captured = mod.name
+                def _apply():
+                    bpy.context.view_layer.objects.active = obj
+                    bpy.ops.object.select_all(action='DESELECT')
+                    obj.select_set(True)
+                    wm = bpy.context.window_manager
+                    win = wm.windows[0] if wm.windows else None
+                    area = next((a for a in win.screen.areas if a.type == 'VIEW_3D'), None) if win else None
+                    ctx = {"window": win, "area": area, "active_object": obj, "object": obj, "selected_objects": [obj]} if area else {"active_object": obj, "object": obj, "selected_objects": [obj]}
+                    with bpy.context.temp_override(**ctx):
+                        bpy.ops.object.modifier_apply(modifier=mod_name_captured)
+                _main_thread_call(_apply)
+                self.send_json(200, {"applied": mod_name_captured})
 
 
 
@@ -635,12 +663,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
             elif self.path == "/frame":
                 scene = bpy.context.scene
-                if "current" in body:
-                    scene.frame_set(int(body["current"]))
-                if "start" in body:
-                    scene.frame_start = int(body["start"])
-                if "end" in body:
-                    scene.frame_end = int(body["end"])
+                bdata = body
+                def _set_frame():
+                    if "current" in bdata:
+                        scene.frame_set(int(bdata["current"]))
+                    if "start" in bdata:
+                        scene.frame_start = int(bdata["start"])
+                    if "end" in bdata:
+                        scene.frame_end = int(bdata["end"])
+                _main_thread_call(_set_frame)
                 self.send_json(200, {"current": scene.frame_current, "start": scene.frame_start, "end": scene.frame_end, "fps": scene.render.fps})
 
             elif self.path == "/render-settings":
@@ -672,6 +703,7 @@ def start_server():
     global _server
     try:
         _server = HTTPServer(("127.0.0.1", PORT), BridgeHandler)
+        _server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         print(f"[blender_bridge] HTTP server started on port {PORT}")
         _server.serve_forever()
     except Exception as e:
@@ -682,12 +714,17 @@ def register():
     global _server_thread
     if _server_thread and _server_thread.is_alive():
         return
+    if not bpy.app.timers.is_registered(_tick):
+        bpy.app.timers.register(_tick, persistent=True)
     _server_thread = threading.Thread(target=start_server, daemon=True)
     _server_thread.start()
 
 
 def unregister():
-    global _server
-    if _server:
-        _server.shutdown()
-        _server = None
+    global _server, _server_thread
+    if bpy.app.timers.is_registered(_tick):
+        bpy.app.timers.unregister(_tick)
+    srv = _server
+    _server = None
+    if srv:
+        threading.Thread(target=srv.shutdown, daemon=True).start()
