@@ -1,4 +1,5 @@
 node_modules/
+*.blend
 *.blend1
 *.blend2
 __pycache__/
