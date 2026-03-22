@@ -292,21 +292,24 @@ class BridgeHandler(BaseHTTPRequestHandler):
             body = self.read_json()
 
             if self.path == "/eval":
-                import io, sys
+                import io, ast
                 expr = body.get("expr", "")
+                buf = io.StringIO()
+                def _print(*a, **kw): buf.write(" ".join(str(x) for x in a) + kw.get("end", "
+"))
+                ns = {"bpy": bpy, "__builtins__": __builtins__, "print": _print}
                 try:
-                    result = eval(expr, {"bpy": bpy, "__builtins__": __builtins__})
-                    self.send_json(200, {"result": str(result)})
-                except SyntaxError:
-                    buf = io.StringIO()
-                    old_stdout = sys.stdout
-                    sys.stdout = buf
                     try:
-                        exec(expr, {"bpy": bpy})
-                    finally:
-                        sys.stdout = old_stdout
-                    out = buf.getvalue()
-                    self.send_json(200, {"result": out if out else "(executed)"})
+                        tree = ast.parse(expr, mode='eval')
+                        result = eval(compile(tree, '<expr>', 'eval'), ns)
+                        out = buf.getvalue()
+                        self.send_json(200, {"result": out if out else str(result)})
+                    except SyntaxError:
+                        exec(expr, ns)
+                        out = buf.getvalue()
+                        self.send_json(200, {"result": out if out else "(executed)"})
+                except Exception as e:
+                    self.send_json(500, {"error": str(e), "traceback": traceback.format_exc()})
 
             elif self.path == "/select":
                 name = body.get("name", "")
@@ -462,16 +465,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 obj = bpy.data.objects.get(name)
                 if obj is None:
                     self.send_json(404, {"error": f"Object not found: {name}"}); return
-                bpy.context.view_layer.objects.active = obj
-                bpy.ops.object.select_all(action='DESELECT')
-                obj.select_set(True)
-                try:
-                    bpy.ops.object.mode_set(mode='OBJECT')
-                except Exception:
-                    pass
-                bpy.ops.object.duplicate(linked=body.get("linked", False))
-                new_obj = bpy.context.view_layer.objects.active
-                self.send_json(200, {"original": name, "duplicate": new_obj.name if new_obj else None})
+                linked = body.get("linked", False)
+                new_obj = obj.copy()
+                if not linked and obj.data:
+                    new_obj.data = obj.data.copy()
+                bpy.context.scene.collection.objects.link(new_obj)
+                self.send_json(200, {"original": name, "duplicate": new_obj.name})
 
             elif self.path == "/scene/set":
                 scene_name = body.get("name", "")
@@ -611,11 +610,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 bpy.context.view_layer.objects.active = obj
                 bpy.ops.object.select_all(action='DESELECT')
                 obj.select_set(True)
-                try:
-                    bpy.ops.object.mode_set(mode='OBJECT')
-                except Exception:
-                    pass
-                bpy.ops.object.modifier_apply(modifier=mod.name)
+                wm = bpy.context.window_manager
+                win = wm.windows[0] if wm.windows else None
+                area = next((a for a in win.screen.areas if a.type == 'VIEW_3D'), None) if win else None
+                ctx = {"window": win, "area": area, "active_object": obj, "object": obj, "selected_objects": [obj]} if area else {"active_object": obj, "object": obj, "selected_objects": [obj]}
+                with bpy.context.temp_override(**ctx):
+                    bpy.ops.object.modifier_apply(modifier=mod.name)
                 self.send_json(200, {"applied": mod.name})
 
 
