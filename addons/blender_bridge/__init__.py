@@ -1,10 +1,10 @@
 bl_info = {
-    "name": "Blender Bridge (blender-kit)",
+    "name": "Blender Bridge",
     "author": "blender-kit",
     "version": (1, 0, 0),
-    "blender": (4, 0, 0),
-    "location": "Runs automatically on enable",
-    "description": "HTTP API server on port 6009 for agentic development with blender-dev CLI",
+    "blender": (4, 2, 0),
+    "location": "Enabled automatically — HTTP server on port 6009",
+    "description": "HTTP API server on port 6009 for blender-dev CLI",
     "category": "Development",
 }
 
