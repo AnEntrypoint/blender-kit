@@ -104,7 +104,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             if self.path == "/info":
                 import sys
                 scene = bpy.context.scene
-                ao = bpy.context.active_object
+                ao = bpy.context.view_layer.objects.active
                 self.send_json(200, {
                     "blender_version": ".".join(str(v) for v in bpy.app.version),
                     "scene": scene.name if scene else None,
@@ -171,9 +171,19 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     self.send_json(404, {"error": f"Object not found: {name}"}); return
                 if not obj.animation_data or not obj.animation_data.action:
                     self.send_json(200, {"object": name, "fcurves": []}); return
+                action = obj.animation_data.action
                 curves = []
-                for fc in obj.animation_data.action.fcurves:
-                    curves.append({"data_path": fc.data_path, "array_index": fc.array_index, "keyframes": [[k.co.x, k.co.y] for k in fc.keyframe_points]})
+                def _collect(fc_list):
+                    for fc in fc_list:
+                        curves.append({"data_path": fc.data_path, "array_index": fc.array_index, "keyframes": [[k.co.x, k.co.y] for k in fc.keyframe_points]})
+                if action.is_action_legacy:
+                    _collect(action.fcurves)
+                else:
+                    slot = action.slots[0] if action.slots else None
+                    if slot:
+                        for layer in action.layers:
+                            for strip in layer.strips:
+                                _collect(strip.channelbag(slot).fcurves)
                 self.send_json(200, {"object": name, "fcurves": curves})
 
             elif self.path.startswith("/object/") and not any(self.path.endswith(s) for s in ["/hide", "/transform", "/delete", "/keyframe", "/fcurves", "/assign-material", "/rename", "/duplicate"]):
@@ -292,7 +302,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     old_stdout = sys.stdout
                     sys.stdout = buf
                     try:
-                        exec(expr, {"bpy": bpy, "print": print})
+                        exec(expr, {"bpy": bpy})
                     finally:
                         sys.stdout = old_stdout
                     out = buf.getvalue()
@@ -460,7 +470,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
                 bpy.ops.object.duplicate(linked=body.get("linked", False))
-                new_obj = bpy.context.active_object
+                new_obj = bpy.context.view_layer.objects.active
                 self.send_json(200, {"original": name, "duplicate": new_obj.name if new_obj else None})
 
             elif self.path == "/scene/set":
