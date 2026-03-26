@@ -14,7 +14,7 @@
     "addons"
   ],
   "scripts": {
-    "test": "node bin/cli.js --help"
+    "test": "node validate.js"
   },
   "keywords": [
     "blender",
