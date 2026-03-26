@@ -14,6 +14,7 @@ npm package: `blender-kit` (bin: blender-kit scaffolder) + `blender-dev` (bin: C
 - `lib/skills.js` — writes SKILL.md + IDE configs to scaffolded projects
 - `lang/loader.js` — loadLangPlugins() for hook discovery
 - `lang/blender.js` — exec:blender lang plugin
+- `validate.js` — validation suite (25 assertions across all modules); runs via `npm test`
 
 ## Ports
 | Port | What | Source |
