@@ -1,6 +1,6 @@
 {
   "name": "blender-kit",
-  "version": "1.0.1774520545",
+  "version": "1.0.1776332974",
   "description": "Agentic Blender 4.x development boilerplate - Python REPL/CLI, HTTP bridge, scene inspector, headless rendering",
   "bin": {
     "blender-kit": "bin/create.js",
